@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Custom Video Player</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121821; --text:#e6ebf2; --muted:#97a3b6; --accent:#4da3ff; --accent-2:#22d3ee; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0; background:linear-gradient(180deg,#0b0f14,#0b0f14 50%,#0e141c); color:var(--text); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+
+    .wrap{max-width:960px; margin:40px auto; padding:16px}
+    .player{position:relative; background:var(--panel); border:1px solid #1b2430; border-radius:16px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.35)}
+
+    /* Video */
+    video{display:block; width:100%; height:auto; background:#000;}
+    video::-webkit-media-controls{display:none !important}
+
+    /* Overlay UI */
+    .overlay{position:absolute; inset:0; display:grid; place-items:center; pointer-events:none}
+    .overlay .big-btn{width:84px; height:84px; border-radius:999px; display:grid; place-items:center; background:rgba(0,0,0,.45); backdrop-filter: blur(6px); border:1px solid rgba(255,255,255,.08); opacity:0; transform:scale(.9); transition:.2s}
+    .overlay.show .big-btn{opacity:1; transform:scale(1);}
+
+    /* Controls */
+    .controls{position:absolute; left:0; right:0; bottom:0; display:flex; flex-direction:column; gap:10px; padding:12px; background:linear-gradient(180deg,transparent,rgba(0,0,0,.55));}
+
+    .row{display:flex; align-items:center; gap:10px}
+
+    .btn{appearance:none; border:0; background:#0f1722; color:var(--text); width:38px; height:38px; border-radius:10px; display:grid; place-items:center; cursor:pointer; transition:transform .08s ease, background .2s}
+    .btn:hover{background:#142033}
+    .btn:active{transform:scale(.96)}
+
+    .time{font-variant-numeric:tabular-nums; color:var(--muted); font-size:14px; min-width:90px; text-align:center}
+
+    /* Range (seek + volume) */
+    .range{position:relative; height:10px; display:flex; align-items:center; width:100%}
+    input[type="range"]{appearance:none; width:100%; height:10px; background:transparent; cursor:pointer}
+    input[type=range]::-webkit-slider-runnable-track{height:6px; background:#1c2735; border-radius:999px}
+    input[type=range]::-moz-range-track{height:6px; background:#1c2735; border-radius:999px}
+    input[type=range]::-webkit-slider-thumb{appearance:none; margin-top:-5px; width:16px; height:16px; border-radius:50%; background:var(--accent); border:2px solid white}
+    input[type=range]::-moz-range-thumb{width:16px; height:16px; border:none; border-radius:50%; background:var(--accent)}
+
+    .track{position:absolute; left:0; right:0; height:6px; background:#1c2735; border-radius:999px}
+    .buffered{position:absolute; left:0; height:6px; background:#243244; border-radius:999px; width:0%}
+    .progress{position:absolute; left:0; height:6px; background:linear-gradient(90deg,var(--accent),var(--accent-2)); border-radius:999px; width:0%}
+
+    .spacer{flex:1}
+
+    .rate{min-width:70px}
+
+    /* Tooltip */
+    .tooltip{position:absolute; bottom:22px; padding:4px 8px; background:#0f1722; color:var(--text); font-size:12px; border:1px solid #1b2430; border-radius:6px; transform:translateX(-50%); pointer-events:none; opacity:0; transition:opacity .12s}
+
+    /* Top bar */
+    .topbar{position:absolute; top:0; left:0; right:0; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; background:linear-gradient(180deg,rgba(0,0,0,.55),transparent)}
+    .title{font-weight:600; letter-spacing:.2px}
+
+    /* Mobile tweaks */
+    @media (max-width:640px){
+      .btn{width:34px;height:34px}
+      .time{display:none}
+      .rate{display:none}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:0 0 14px">Custom Video Player</h1>
+    <p style="margin:0 0 14px; color:var(--muted)">Place <code>video.mp4</code> next to this file. No default controls are used. Keyboard: Space/K play‑pause, J/L ±10s, ←/→ ±5s, M mute, F fullscreen, I PiP.</p>
+
+    <div class="player" id="player" aria-label="Custom video player">
+      <div class="topbar">
+        <div class="title">Minecraft Pocket/Bedrock Edition New Duplicate Glitch</div>
+        <div class="row">
+          <button class="btn" id="pipBtn" title="Picture in Picture" aria-label="Picture in Picture">▣</button>
+          <button class="btn" id="miniBtn" title="Mini player" aria-label="Mini player">🗗</button>
+        </div>
+      </div>
+
+      <video id="video" preload="metadata" playsinline></video>
+
+      <div class="overlay" id="overlay"><div class="big-btn" id="bigPlay" aria-hidden="true">▶</div></div>
+
+      <div class="controls" id="controls" role="group" aria-label="Player controls">
+        <div class="range" id="seekWrap" aria-label="Seek">
+          <div class="track"></div>
+          <div class="buffered" id="buffered"></div>
+          <div class="progress" id="progress"></div>
+          <div class="tooltip" id="seekTip">00:00</div>
+          <input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek slider" />
+        </div>
+
+        <div class="row">
+          <button class="btn" id="play" title="Play/Pause" aria-label="Play or pause">▶</button>
+          <button class="btn" id="rew" title="-10s" aria-label="Rewind 10 seconds">«</button>
+          <button class="btn" id="ff" title="+10s" aria-label="Forward 10 seconds">»</button>
+
+          <div class="time" id="time">00:00 / 00:00</div>
+          <div class="spacer"></div>
+
+          <div class="row">
+            <button class="btn" id="mute" title="Mute" aria-label="Mute">🔈</button>
+            <div class="range" style="width:120px">
+              <div class="track"></div>
+              <div class="progress" id="volProgress" style="width:100%"></div>
+              <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
+            </div>
+          </div>
+
+          <select id="rate" class="btn rate" title="Playback speed" aria-label="Playback speed">
+            <option value="0.5">0.5×</option>
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+            <option value="1.75">1.75×</option>
+            <option value="2">2×</option>
+          </select>
+
+          <button class="btn" id="fs" title="Fullscreen" aria-label="Fullscreen">⤢</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (sel,root=document)=>root.querySelector(sel);
+    const video = $('#video');
+    const playBtn = $('#play');
+    const rewBtn = $('#rew');
+    const ffBtn = $('#ff');
+    const timeEl = $('#time');
+    const muteBtn = $('#mute');
+    const vol = $('#volume');
+    const volProgress = $('#volProgress');
+    const seek = $('#seek');
+    const progress = $('#progress');
+    const bufferedBar = $('#buffered');
+    const seekWrap = $('#seekWrap');
+    const seekTip = $('#seekTip');
+    const fsBtn = $('#fs');
+    const rateSel = $('#rate');
+    const overlay = $('#overlay');
+    const bigPlay = $('#bigPlay');
+    const pipBtn = $('#pipBtn');
+    const miniBtn = $('#miniBtn');
+    const player = $('#player');
+
+    // Load source
+    const source = document.createElement('source');
+    source.src = 'video.mp4';
+    source.type = 'video/mp4';
+    video.appendChild(source);
+
+    // Utils
+    const clamp = (n,min,max)=>Math.min(Math.max(n,min),max);
+    function fmt(t){ if(!isFinite(t)) return '00:00'; t=Math.max(0,t|0); const h=(t/3600)|0, m=((t%3600)/60)|0, s=(t%60)|0; return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`}
+
+    // Play / Pause
+    function updatePlayIcon(){ playBtn.textContent = video.paused ? '▶' : '❚❚'; }
+    playBtn.addEventListener('click', ()=> video.paused ? video.play() : video.pause());
+    video.addEventListener('play', ()=>{ updatePlayIcon(); flashOverlay('▶'); });
+    video.addEventListener('pause', ()=>{ updatePlayIcon(); flashOverlay('❚❚'); });
+    overlay.addEventListener('click', ()=> video.paused ? video.play() : video.pause());
+
+    function flashOverlay(icon){ bigPlay.textContent = icon; overlay.classList.add('show'); clearTimeout(flashOverlay.t); flashOverlay.t=setTimeout(()=>overlay.classList.remove('show'),200); }
+
+    // Time + progress
+    video.addEventListener('loadedmetadata', ()=>{ seek.max = video.duration || 0; updateTime(); updateBuffered(); });
+    video.addEventListener('timeupdate', ()=>{ seek.value = video.currentTime; updateBars(); updateTime(); });
+    video.addEventListener('progress', updateBuffered);
+
+    function updateTime(){ timeEl.textContent = `${fmt(video.currentTime)} / ${fmt(video.duration)}`; }
+    function updateBars(){ const p = (video.currentTime / (video.duration||1))*100; progress.style.width = p + '%'; }
+    function updateBuffered(){
+      if(video.buffered && video.buffered.length){
+        const end = video.buffered.end(video.buffered.length-1);
+        const w = (end / (video.duration||1))*100; bufferedBar.style.width = w + '%';
+      }
+    }
+
+    // Seek interactions
+    let seeking=false;
+    seek.addEventListener('input', ()=>{ seeking=true; progress.style.width = (seek.value/(seek.max||1))*100 + '%'; timeEl.textContent = `${fmt(seek.value)} / ${fmt(video.duration)}`; });
+    seek.addEventListener('change', ()=>{ video.currentTime = +seek.value; seeking=false; });
+
+    // Hover tooltip
+    seekWrap.addEventListener('mousemove', e=>{
+      const rect = seekWrap.getBoundingClientRect();
+      const ratio = clamp((e.clientX-rect.left)/rect.width,0,1);
+      const t = ratio * (video.duration||0);
+      seekTip.style.left = (ratio*100) + '%';
+      seekTip.textContent = fmt(t);
+      seekTip.style.opacity = 1;
+    });
+    seekWrap.addEventListener('mouseleave', ()=> seekTip.style.opacity = 0);
+
+    // Skip
+    rewBtn.addEventListener('click', ()=>{ video.currentTime = Math.max(0, video.currentTime - 10); });
+    ffBtn.addEventListener('click', ()=>{ video.currentTime = Math.min(video.duration||0, video.currentTime + 10); });
+
+    // Volume + mute
+    function setVol(v){ video.volume = clamp(v,0,1); vol.value = video.volume; volProgress.style.width = (video.volume*100)+'%'; muteBtn.textContent = video.muted || video.volume===0 ? '🔇' : '🔈'; }
+    vol.addEventListener('input', ()=> setVol(+vol.value));
+    muteBtn.addEventListener('click', ()=>{ video.muted = !video.muted; muteBtn.textContent = video.muted ? '🔇' : '🔈'; });
+
+    // Speed
+    rateSel.addEventListener('change', ()=> video.playbackRate = +rateSel.value);
+
+    // Fullscreen
+    fsBtn.addEventListener('click', ()=>{
+      if(document.fullscreenElement){ document.exitFullscreen(); }
+      else{ player.requestFullscreen?.() || player.webkitRequestFullscreen?.(); }
+    });
+
+    // Picture-in-Picture (if supported)
+    pipBtn.addEventListener('click', async ()=>{
+      try{
+        if(document.pictureInPictureElement) await document.exitPictureInPicture();
+        else if(document.pictureInPictureEnabled) await video.requestPictureInPicture();
+      }catch(e){ console.warn(e); }
+    });
+
+    // Mini-player (floating when not fullscreen)
+    let mini=false;
+    miniBtn.addEventListener('click', ()=>{
+      mini = !mini;
+      player.style.position = mini ? 'fixed' : 'relative';
+      if(mini){
+        player.style.width = '360px';
+        player.style.bottom = '16px';
+        player.style.right = '16px';
+        player.style.zIndex = '9999';
+        player.style.boxShadow = '0 10px 30px rgba(0,0,0,.6)';
+      } else {
+        player.style.width = '';
+        player.style.bottom = '';
+        player.style.right = '';
+        player.style.zIndex = '';
+        player.style.boxShadow = '';
+      }
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', e=>{
+      if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+      switch(e.key.toLowerCase()){
+        case ' ': case 'k': e.preventDefault(); video.paused?video.play():video.pause(); break;
+        case 'arrowleft': video.currentTime = Math.max(0, video.currentTime - 5); break;
+        case 'arrowright': video.currentTime = Math.min(video.duration||0, video.currentTime + 5); break;
+        case 'j': video.currentTime = Math.max(0, video.currentTime - 10); break;
+        case 'l': video.currentTime = Math.min(video.duration||0, video.currentTime + 10); break;
+        case 'm': video.muted = !video.muted; muteBtn.textContent = video.muted ? '🔇' : '🔈'; break;
+        case 'f': fsBtn.click(); break;
+        case 'i': pipBtn.click(); break;
+        default: break;
+      }
+    });
+
+    // Click to toggle
+    video.addEventListener('click', ()=> playBtn.click());
+
+    // Prevent controls from hiding on interaction (you can add auto-hide if needed)
+  </script>
+</body>
+</html>
